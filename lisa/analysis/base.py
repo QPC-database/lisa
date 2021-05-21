@@ -37,16 +37,23 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 # Avoid ambiguity between function name and usual variable name
 from cycler import cycler as make_cycler
-
-import mplcursors
+import holoviews as hv
+import holoviews.plotting.mpl
+import bokeh
+import bokeh.layouts
+import bokeh.models.widgets
+import panel as pn
 
 from ipywidgets import widgets
 from IPython.display import display
 
-from lisa.utils import Loggable, get_subclasses, get_doc_url, get_short_doc, split_paragraphs, update_wrapper_doc, guess_format, is_running_ipython, nullcontext, measure_time
+from lisa.utils import Loggable, get_subclasses, get_doc_url, get_short_doc, split_paragraphs, update_wrapper_doc, guess_format, is_running_ipython, nullcontext, measure_time, optional_kwargs, deprecate, memoized
 from lisa.trace import MissingTraceEventError, PandasDataDesc
 from lisa.notebook import axis_link_dataframes, axis_cursor_delta, WrappingHBox, make_figure
 from lisa.generic import TypedList
+
+# Ensure hv.extension() is called
+import lisa.notebook
 
 
 class AnalysisHelpers(Loggable, abc.ABC):
@@ -67,6 +74,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
         pass
 
     @classmethod
+    @deprecate('Made irrelevant by the use of holoviews', deprecated_in='2.0', removed_in='3.0')
     def setup_plot(cls, width=16, height=4, ncols=1, nrows=1, interactive=None, link_dataframes=None, cursor_delta=None, **kwargs):
         """
         Common helper for setting up a matplotlib plot
@@ -142,6 +150,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
 
     @classmethod
     @contextlib.contextmanager
+    @deprecate('Made irrelevant by the use of holoviews', deprecated_in='2.0', removed_in='3.0')
     def set_axis_cycler(cls, axis, *cyclers):
         """
         Context manager to set cyclers on an axis (and the default cycler as
@@ -196,7 +205,8 @@ class AnalysisHelpers(Loggable, abc.ABC):
 
         def set_cycler(cycler):
             plt.rcParams['axes.prop_cycle'] = cycler
-            axis.set_prop_cycle(cycler)
+            if axis is not None:
+                axis.set_prop_cycle(cycler)
 
         set_cycler(cycler)
         try:
@@ -209,6 +219,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
 
     @classmethod
     @contextlib.contextmanager
+    @deprecate('Made irrelevant by the use of holoviews', deprecated_in='2.0', removed_in='3.0')
     def set_axis_rc_params(cls, axis, rc_params):
         """
         Context manager to set ``matplotlib.rcParams`` while plotting, and then
@@ -226,6 +237,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
                 matplotlib.rcParams.update(orig)
 
     @classmethod
+    @deprecate('Made irrelevant by the use of holoviews', deprecated_in='2.0', removed_in='3.0')
     def cycle_colors(cls, axis, nr_cycles=1):
         """
         Cycle the axis color cycle ``nr_cycles`` forward
@@ -253,6 +265,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
         axis.set_prop_cycle(make_cycler(color=colors[nr_cycles:] + colors[:nr_cycles]))
 
     @classmethod
+    @deprecate('Made irrelevant by the use of holoviews', deprecated_in='2.0', removed_in='3.0')
     def get_next_color(cls, axis):
         """
         Get the next color that will be used to draw lines on the axis
@@ -291,35 +304,69 @@ class AnalysisHelpers(Loggable, abc.ABC):
 
         return filepath
 
-    def save_plot(self, figure, filepath=None, img_format=None):
+    def _fig_as_plot_method(self, fig, **kwargs):
+        # Create a throw-away plot method so we don't duplicate the logic
+        # in plot_method
+        def f(self):
+            return fig
+        f.__name__ = ''
+        f.__qualname__ = ''
+        # Decorate after changing the name, otherwise the name of the
+        # wrapper will be changed but not the one used for titles
+        return AnalysisHelpers.plot_method(f)(self, **kwargs)
+
+    def save_plot(self, figure, filepath=None, img_format=None, backend=None):
         """
-        Save a :class:`matplotlib.figure.Figure` as an image file.
+        Save a holoviews element or :class:`matplotlib.figure.Figure` as an image file.
+
+        :param figure: Figure to save to a file.
+        :type figure: matplotlib.figure.Figure or holoviews.core.Element
+
+        :param filepath: Path to the file to save the plot. If ``None``, a
+            default path will be used.
+        :type filepath: str or None
+
+        :param img_format: Format of the image. If ``None``, it is guessed from
+            the ``filepath``.
+        :type img_format: str or None
+
+        :param backend: Holoviews backend to use. If left to ``None``, the
+            current backend enabled with ``hv.extension()`` will be used.
+        :type backend: str or None
         """
 
         img_format = img_format or guess_format(filepath) or 'png'
-        caller = inspect.stack()[1][3]
 
         filepath = filepath or self.get_default_plot_path(
             img_format=img_format,
-            plot_name=caller,
+            # Use the caller's name as plot name
+            plot_name=inspect.stack()[1].function,
         )
 
-        # The suptitle is not taken into account by tight layout by default:
-        # https://stackoverflow.com/questions/48917631/matplotlib-how-to-return-figure-suptitle
-        suptitle = figure._suptitle
-        figure.savefig(
-            filepath,
-            bbox_extra_artists=[suptitle] if suptitle else None,
-            format=img_format,
-            bbox_inches='tight'
-        )
+        if isinstance(figure, matplotlib.figure.Figure):
+            # The suptitle is not taken into account by tight layout by default:
+            # https://stackoverflow.com/questions/48917631/matplotlib-how-to-return-figure-suptitle
+            suptitle = figure._suptitle
+            figure.savefig(
+                filepath,
+                bbox_extra_artists=[suptitle] if suptitle else None,
+                format=img_format,
+                bbox_inches='tight'
+            )
+        else:
+            self._fig_as_plot_method(
+                figure,
+                filepath=filepath,
+                backend=backend,
+            )
 
+    @deprecate('Made irrelevant by the use of holoviews', deprecated_in='2.0', removed_in='3.0')
     def do_plot(self, plotter, axis=None, **kwargs):
         """
         Simple helper for consistent behavior across methods.
         """
 
-        local_fig = axis is None
+        local_fig = False
         if local_fig:
             fig, axis = self.setup_plot(**kwargs)
 
@@ -328,7 +375,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
 
     @staticmethod
     def _get_base64_image(axis, fmt='png'):
-        if isinstance(axis, numpy.ndarray):
+        if isinstance(axis, (numpy.ndarray, list)):
             axis = axis[0]
         figure = axis.get_figure()
         buff = io.BytesIO()
@@ -359,18 +406,6 @@ class AnalysisHelpers(Loggable, abc.ABC):
             for name, f in inspect.getmembers(obj, predicate=predicate)
         ]
 
-    _FIG_DATA = weakref.WeakKeyDictionary()
-    """
-    Data that are related to a matplotlib figure and that must not be duplicated by each call.gqq
-    """
-
-    @classmethod
-    def _get_fig_data(cls, fig, key):
-        return cls._FIG_DATA.setdefault(fig, {})[key]
-
-    def _set_fig_data(cls, fig, key, val):
-        cls._FIG_DATA.setdefault(fig, {})[key] = val
-
     def _make_fig_toolbar(self, fig):
         toolbar = WrappingHBox()
         widget_list = []
@@ -388,205 +423,482 @@ class AnalysisHelpers(Loggable, abc.ABC):
         return toolbar
 
     @classmethod
-    def plot_method(cls, return_axis=False):
+    def plot_method(cls, f):
         """
         Plot function decorator.
 
-        :param return_axis: If ``True``, the decorated method is expected to
-            return a :class:`matplotlib.axes.Axes` instance, by using
-            :meth:`do_plot` for example. Otherwise, it is expected to
-            take an ``axis`` and ``local_fig`` parameters like the ``plotter``
-            given to :meth:`do_plot` and just update the ``axis``.
-        :type return_axis: bool
+        It provides among other things:
 
-        It allows for automatic plot setup and HTML and reStructuredText output.
+            * automatic plot setup
+            * HTML and reStructuredText output.
+            * workarounds some holoviews issues
+            * integration in other tools
         """
+        @update_wrapper_doc(
+            f,
+            added_by=f':meth:`{AnalysisHelpers.__module__}.{AnalysisHelpers.__qualname__}.plot_method`',
+            description=textwrap.dedent("""
+            :returns: An :class:`matplotlib.axes.Axes` containing the plot,
+                or rich formats depending on ``output`` value.
 
-        def decorator(f):
-            @update_wrapper_doc(
-                f,
-                added_by=f':meth:`{AnalysisHelpers.__module__}.{AnalysisHelpers.__qualname__}.plot_method`',
-                description=textwrap.dedent("""
-                :returns: An :class:`matplotlib.axes.Axes` containing the plot,
-                    or rich formats depending on ``output`` value.
+            :param backend: Holoviews plot library backend to use:
 
-                :param axis: instance of :class:`matplotlib.axes.Axes` to plot into.
-                    If `None`, a new figure and axis are created and returned.
-                :type axis: matplotlib.axes.Axes
-                    or numpy.ndarray(matplotlib.axes.Axes)
-                    or None
+                    * ``bokeh``: good support for interactive plots
+                    * ``matplotlib``: sometimes better static image output, but
+                        unpredictable results that more often than not require
+                        a fair amount of hacks to get something good.
+                    * ``plotly``: not supported by LISA but technically
+                        available. Since it's very similar to bokeh
+                        feature-wise, bokeh should be preferred.
 
-                :param colors: List of color names to use for the plots.
-                :type colors: list(str) or None
+                .. note:: In a notebook, the way to choose which backend should
+                    be used to display plots is typically selected with e.g.
+                    ``holoviews.extension('bokeh')`` at the beginning of the
+                    notebook. The ``backend`` parameter is more intended for
+                    expert use where an object of the given library is
+                    required, without depending on the environment.
+            :type backend: str or None
 
-                :param linestyles: List of linestyle to use for the plots.
-                :type linestyles: list(str) or None
+            :param _compat_render: Internal parameter not to be used. This
+                enables the compatibility mode where ``render=True`` by default
+                when matplotlib is the current holoviews backend.
+            :type _compat_render: bool
 
-                :param markers: List of marker to use for the plots.
-                :type markers: list(str) or None
+            :param colors: List of color names to use for the plots.
+            :type colors: list(str) or None
 
-                :param rc_params: Matplotlib rc params dictionary overlaid on
-                    existing settings.
-                :type rc_params: dict(str, object) or None
+            :param linestyles: List of linestyle to use for the plots.
+            :type linestyles: list(str) or None
 
-                :param filepath: Path of the file to save the figure in. If
-                    `None`, no file is saved.
-                :type filepath: str or None
+            :param markers: List of marker to use for the plots.
+            :type markers: list(str) or None
 
-                :param always_save: When ``True``, the plot is always saved
-                    even if no ``filepath`` has explicitly been set. In that
-                    case, a default path will be used.
-                :type always_save: bool
+            :param filepath: Path of the file to save the figure in. If
+                `None`, no file is saved.
+            :type filepath: str or None
 
-                :param img_format: The image format to generate. Defaults to
-                    using filepath to guess the type, or "png" if no filepath is
-                    given. `html` and `rst` are supported in addition to
-                    matplotlib image formats.
-                :type img_format: str
+            :param always_save: When ``True``, the plot is always saved
+                even if no ``filepath`` has explicitly been set. In that
+                case, a default path will be used.
+            :type always_save: bool
 
-                :param output: Can be ``None`` to return a
-                    :class:`matplotlib.axes.Axes`, ``html`` to return an HTML
-                    document, or ``rst`` for a reStructuredText output.
-                :type output: str or None
+            :param img_format: The image format to generate. Defaults to
+                using filepath to guess the type, or "png" if no filepath is
+                given. `html` and `rst` are supported in addition to
+                matplotlib image formats.
+            :type img_format: str
 
-                :Variable keyword arguments: Forwarded to
-                    :meth:`~lisa.analysis.base.AnalysisHelpers.setup_plot`
-                """),
-                remove_params=['local_fig'],
-                include_kwargs=True,
-            )
-            def wrapper(self, *args, filepath=None, axis=None, output=None, img_format=None, always_save=False, colors: TypedList[str]=None, linestyles: TypedList[str]=None, markers: TypedList[str]=None, rc_params=None, **kwargs):
+            :param output: Change the return value of the method:
 
-                def is_f_param(param):
-                    """
-                    Return True if the parameter is for `f`, False if it is
-                    for setup_plot()
-                    """
-                    try:
-                        desc = inspect.signature(f).parameters[param]
-                    except KeyError:
-                        return False
-                    else:
-                        # Passing kwargs=42 to a function taking **kwargs
-                        # should not return True here, as we only consider
-                        # explicitly listed arguments
-                        return desc.kind not in (
-                            inspect.Parameter.VAR_KEYWORD,
-                            inspect.Parameter.VAR_POSITIONAL,
-                        )
+                * ``None``: holoviews figure
+                * ``render``: a backend-specific object, such as
+                  :class:`matplotlib.figure.Figure` if ``backend='matplotlib'``
+                * ``html``: HTML document
+                * ``rst``: a snippet of reStructuredText
+            :type output: str or None
 
-                # Factor the *args inside the **kwargs by binding them to the
-                # user-facing signature, which is the one of the wrapper.
-                kwargs.update(
-                    inspect.signature(wrapper).bind_partial(self, *args).arguments
+            :param axis: instance of :class:`matplotlib.axes.Axes` to plot into.
+                If `None`, a new figure and axis are created and returned.
+
+                .. deprecated:: 2.0
+                    This parameter is deprecated, use holoviews APIs to compose
+                    plot elements:
+                    http://holoviews.org/user_guide/Composing_Elements.html
+            :type axis: matplotlib.axes.Axes
+                or numpy.ndarray(matplotlib.axes.Axes)
+                or None
+
+            :param rc_params: Matplotlib rc params dictionary overlaid on
+                existing settings.
+
+                .. deprecated:: 2.0
+                    This parameter is deprecated, use holoviews APIs to set
+                    matplotlib options.
+            :type rc_params: dict(str, object) or None
+            """),
+            include_kwargs=True,
+        )
+        # Note about default values: the defaults must be chosen so that plot
+        # methods can directly call other plot methods internally without
+        # unexpected behaviors. Things like _compar_render must therefore
+        # default to False here.
+        #
+        # If for some reason the "user visible" default must be different, it
+        # can be changed using the AnalysisProxy(params=dict(...)) when the
+        # AnalysisProxy is instanciated in lisa.trace
+        def wrapper(self, *args,
+            filepath=None,
+            output=None,
+            img_format=None,
+            always_save=False,
+
+            backend=None,
+            _compat_render=False,
+            ui=False,
+            link_dataframes=None,
+            cursor_delta=None,
+
+            width=None,
+            height=None,
+            colors: TypedList[str]=None,
+            linestyles: TypedList[str]=None,
+            markers: TypedList[str]=None,
+
+            # Deprecated mpl-specific parameters
+            rc_params=None,
+            axis=None,
+            interactive=None,
+
+            **kwargs
+        ):
+            # If the user did not specify a backend, we will return a
+            # holoviews object, but we need to know what is the current
+            # backend so we can apply the relevant options.
+            if backend is None:
+                backend = hv.Store.current_backend
+                # For backward compat, return a matplotlib Figure when this
+                # backend is selected
+                _output = (
+                    'render'
+                    if _compat_render and backend == 'matplotlib'
+                    else output
+                )
+            else:
+                _output = output
+
+            output = _output if output is None else output
+
+            # Deprecated, but allows easy backward compat
+            if axis is not None:
+                output = output or 'render'
+                warnings.warn('axis parameter is deprecated, use holoviews APIs to combine plots (see overloading of ``*`` operator for holoviews elements)', DeprecationWarning)
+            if interactive is not None:
+                warnings.warn('"interactive" parameter is deprecated and ignored', DeprecationWarning)
+            interactive = is_running_ipython()
+            ui = interactive if ui is None else ui
+
+            img_format = img_format or guess_format(filepath) or 'png'
+
+            # When we create the figure ourselves, always save the plot to
+            # the default location
+            if filepath is None and always_save:
+                filepath = self.get_default_plot_path(
+                    img_format=img_format,
+                    plot_name=f.__name__,
                 )
 
-                f_kwargs = {
-                    param: val
-                    for param, val in kwargs.items()
-                    if is_f_param(param)
-                }
+            # Factor the *args inside the **kwargs by binding them to the
+            # user-facing signature, which is the one of the wrapper.
+            kwargs.update(
+                inspect.signature(wrapper).bind_partial(self, *args).arguments
+            )
 
-                img_format = img_format or guess_format(filepath) or 'png'
-                local_fig = axis is None
+            with lisa.notebook._hv_set_backend(backend):
+                hv_fig = f(**kwargs)
 
-                # When we create the figure ourselves, always save the plot to
-                # the default location
-                if local_fig and filepath is None and always_save:
-                    filepath = self.get_default_plot_path(
-                        img_format=img_format,
-                        plot_name=f.__name__,
+                #TODO: add support for link_dataframes and cursor_delta
+                # Use QGrid for link_dataframes
+
+                # For each element type, only set the option if it has not
+                # been set already. This allows the plot method to give
+                # customized options that will not be overridden here.
+                set_by_method = {}
+                for category in ('plot', 'style'):
+                    for name, _opts in hv_fig.traverse(
+                        lambda element: (
+                            element.__class__.name,
+                            hv.Store.lookup_options(
+                                backend, element, category
+                            ).kwargs.keys()
+                        )
+                    ):
+                        set_by_method.setdefault(name, set()).update(_opts)
+
+                def set_options(fig, opts, typs):
+                    return fig.options(
+                        {
+                            typ: {
+                                k: v
+                                for k, v in opts.items()
+                                if k not in set_by_method.get(typ, tuple())
+                            }
+                            for typ in typs
+                        },
+                        # Specify the backend explicitly, in case the user
+                        # asked for a specific backend
+                        backend=backend,
                     )
 
-                cyclers = dict(
-                    color=colors,
-                    linestyle=linestyles,
-                    marker=markers,
+                def set_option(fig, name, val, typs, extra=None):
+                    return set_options(
+                        fig=fig,
+                        opts={name: val, **(extra or {})},
+                        typs=typs,
+                    )
+
+                def set_cycle(fig, name, xs, typs, extra=None):
+                    return set_option(
+                        fig=fig,
+                        name=name,
+                        val=hv.Cycle(xs),
+                        typs=typs,
+                        extra=extra,
+                    )
+
+                # Marker
+                if backend == 'bokeh':
+                    marker_opts = dict(
+                        # Disable muted legend for now, as they will mute
+                        # everything:
+                        # https://github.com/holoviz/holoviews/issues/3936
+                        # legend_muted=True,
+                        muted_alpha=0,
+                        tools=[],
+                    )
+                elif backend == 'matplotlib':
+                    # Hide the markers since it clutters static plots, making
+                    # them hard to read.
+                    marker_opts = dict(
+                        visible=False,
+                    )
+
+                hv_fig = set_options(
+                    hv_fig,
+                    opts=marker_opts,
+                    typs=('Scatter.marker',),
                 )
-                cyclers = {
-                    name: value
-                    for name, value in cyclers.items()
-                    if value
-                }
-                if cyclers:
-                    cyclers = [
-                        make_cycler(**{name: value})
-                        for name, value in cyclers.items()
-                    ]
-                    set_cycler = lambda axis: cls.set_axis_cycler(axis, *cyclers)
+
+                # Tools
+                if backend == 'bokeh':
+                    hv_fig = set_option(
+                        hv_fig,
+                        name='tools',
+                        val=['hover'],
+                        typs=('Curve', 'Path', 'Points', 'Scatter', 'Bars', 'Histogram', 'Distribution', 'HeatMap', 'Image', 'Rectangles', 'Area', 'Spikes'),
+                    ).options(
+                        backend=backend,
+                        # Sometimes holoviews (or bokeh) decides to put it on
+                        # the side, which crops it
+                        toolbar='above',
+                    )
+
+                if colors:
+                    hv_fig = set_cycle(
+                        hv_fig,
+                        name='color',
+                        xs=colors,
+                        typs=('Curve', 'Scatter', 'Points', 'Area', 'Bars', 'Histogram', 'Distribution', 'HeatMap', 'Rectangles', 'Area', 'HLine', 'VLine', 'Spikes'),
+                    )
                 else:
-                    set_cycler = lambda axis: nullcontext()
+                    # Workaround:
+                    # https://github.com/holoviz/holoviews/issues/4981
+                    hv_fig = set_option(
+                        hv_fig,
+                        name='color',
+                        val=hv.Cycle('default_colors'),
+                        typs=('Rectangles',),
+                    )
+
+                if markers:
+                    marker_map = dict(
+                        matplotlib={},
+                        bokeh={
+                            'x': 'cross',
+                            '*': 'asterisk',
+                            'o': 'circle',
+                        },
+                        plotly={
+                            '*': 'star',
+                            'o': 'circle',
+                        },
+                    )
+                    markers = list(map(
+                        lambda marker: marker_map[backend].get(marker, marker),
+                        markers
+                    ))
+                    if backend == 'matplotlib':
+                        extra=dict(s=100)
+                    else:
+                        extra=dict(size=10)
+                    hv_fig = set_cycle(
+                        hv_fig,
+                        name='marker',
+                        xs=markers,
+                        typs=('Points', 'Scatter'),
+                        extra=extra,
+                    )
+
+                if linestyles:
+                    linestyle_map = dict(
+                        matplotlib={},
+                        bokeh={
+                            '.': 'dotted',
+                            '-': 'dashed',
+                        },
+                        plotly={
+                            '.': 'dot',
+                            '-': 'dash',
+                        },
+                    )
+                    linestyles = list(map(
+                        lambda linestyle: linestyle_map[backend].get(linestyle, linestyle),
+                        linestyles
+                    ))
+                    if backend == 'matplotlib':
+                        name = 'linestyle'
+                    elif backend == 'plotly':
+                        name = 'dash'
+                    else:
+                        name = 'line_dash'
+
+                    hv_fig = set_cycle(
+                        hv_fig,
+                        name=name,
+                        xs=linestyles,
+                        typs=('Curve',)
+                    )
 
                 if rc_params:
-                    set_rc_params = lambda axis: cls.set_axis_rc_params(axis, rc_params)
-                else:
-                    set_rc_params = lambda axis: nullcontext()
+                    warnings.warn('rc_params deprecated, use holoviews APIs to set matplotlib parameters', DeprecationWarning)
+                    if backend == 'matplotlib':
+                        hv_fig = hv_fig.opts(fig_rcparams=rc_params)
+                    else:
+                        self.get_logger().warning('rc_params is only used with matplotlib backend')
 
-                # Allow returning an axis directly, or just update a given axis
-                if return_axis:
-                    # In that case, the function takes all the kwargs
-                    with set_cycler(axis), set_rc_params(axis):
-                        axis = f(**kwargs, axis=axis)
-                else:
-                    if local_fig:
-                        setup_plot_kwargs = {
-                            param: val
-                            for param, val in kwargs.items()
-                            if param not in f_kwargs
-                        }
-                        fig, axis = self.setup_plot(**setup_plot_kwargs)
+                # Figure size
+                if backend in ('bokeh', 'plotly'):
+                    aspect = 4
 
-                    f_kwargs.update(
-                        axis=axis,
-                        local_fig=f_kwargs.get('local_fig', local_fig),
+                    if (width, height) == (None, None):
+                        size = dict(
+                            aspect=aspect,
+                            responsive=True,
+                        )
+                    elif height is None:
+                        size = dict(
+                            width=width,
+                            height=int(width / aspect),
+                        )
+                    elif width is None:
+                        size = dict(
+                            height=height,
+                            responsive=True,
+                        )
+                    else:
+                        size = dict(
+                            width=width,
+                            height=height,
+                        )
+
+                    hv_fig = set_options(
+                        hv_fig,
+                        opts=size,
+                        typs=('Curve', 'Path', 'Points', 'Scatter', 'Overlay', 'Bars', 'Histogram', 'Distribution', 'HeatMap', 'Image', 'Rectangles', 'Area', 'HLine', 'VLine', 'Spikes', 'HSpan', 'VSpan'),
                     )
-                    with set_cycler(axis), set_rc_params(axis):
-                        f(**f_kwargs)
+                elif backend == 'matplotlib':
+                    width = 16 if width is None else width
+                    height = 4 if height is None else height
+                    fig_inches = max(width, height)
 
-                if isinstance(axis, numpy.ndarray):
-                    fig = axis[0].get_figure()
-                else:
-                    fig = axis.get_figure()
+                    hv_fig = set_options(
+                        hv_fig,
+                        opts=dict(
+                            aspect=width / height,
+                            fig_inches=fig_inches,
+                        ),
+                        typs=('Curve', 'Path', 'Points', 'Scatter', 'Overlay', 'Bars', 'Histogram', 'Distribution', 'HeatMap', 'Image', 'Rectangles', 'Area', 'HLine', 'VLine', 'Spikes'),
+                    )
+                    # Not doing this on the Layout will prevent getting big
+                    # figures, but the "aspect" cannot be set on a Layout
+                    hv_fig = set_options(
+                        hv_fig,
+                        opts=dict(fig_inches=fig_inches),
+                        typs=('Layout',),
+                    )
+
+                # Use a memoized function to make sure we only do the rendering once
+                @memoized
+                def rendered_fig():
+                    if backend == 'matplotlib':
+                        # Make sure to use an interactive renderer for notebooks,
+                        # otherwise the plot will not be displayed
+                        renderer = hv.plotting.mpl.MPLRenderer.instance(
+                            interactive=interactive
+                        )
+                        return renderer.get_plot(
+                            hv_fig,
+                            interactive=interactive,
+                            axis=axis,
+                            fig=axis.figure if axis else None,
+                        ).state
+                    else:
+                        return hv.renderer(backend).get_plot(hv_fig).state
 
                 def resolve_formatter(fmt):
                     format_map = {
                         'rst': cls._get_rst_content,
+                        'sphinx-rst': cls._get_rst_content,
                         'html': cls._get_html,
+                        'sphinx-html': cls._get_html,
                     }
                     try:
                         return format_map[fmt]
                     except KeyError:
                         raise ValueError(f'Unsupported format: {fmt}')
 
-                if output is None:
-                    out = axis
-
-                    # Show the LISA figure toolbar
-                    if is_running_ipython():
-                        # Make sure we only add one button per figure
-                        try:
-                            toolbar = self._get_fig_data(fig, 'toolbar')
-                        except KeyError:
-                            toolbar = self._make_fig_toolbar(fig)
-                            self._set_fig_data(fig, 'toolbar', toolbar)
-                            display(toolbar)
-
-                        mplcursors.cursor(fig)
-                else:
-                    out = resolve_formatter(output)(f, [], f_kwargs, axis)
-
                 if filepath:
-                    if img_format in ('html', 'rst'):
-                        content = resolve_formatter(img_format)(f, [], f_kwargs, axis)
+                    if backend in ('bokeh', 'matplotlib') and img_format in ('html', 'sphinx-html', 'rst', 'sphinx-rst'):
+                        content = resolve_formatter(img_format)(
+                            fmt=img_format,
+                            f=f,
+                            args=[],
+                            kwargs=kwargs,
+                            fig=rendered_fig(),
+                            backend=backend
+                        )
+                        # TODO: set page title when it's HTML, to avoid having a "<string>" placeholder
 
                         with open(filepath, 'wt', encoding='utf-8') as fd:
                             fd.write(content)
                     else:
-                        fig.savefig(filepath, format=img_format, bbox_inches='tight')
+                        # Avoid cropping the legend on some backends
+                        static_fig = set_options(
+                            hv_fig,
+                            opts=dict(responsive=False),
+                            typs=('Curve', 'Path', 'Points', 'Scatter', 'Overlay', 'Bars', 'Histogram', 'Distribution', 'HeatMap', 'Image', 'Rectangles', 'HLine', 'VLine', 'VSpan', 'HSpan', 'Spikes'),
+                        )
+                        hv.save(static_fig, filepath, fmt=img_format, backend=backend)
+
+                if output == 'render':
+                    if _compat_render and backend == 'matplotlib':
+                        axes = rendered_fig().axes
+                        if len(axes) == 1:
+                            out = axes[0]
+                        else:
+                            out = axes
+                    else:
+                        out = rendered_fig()
+                elif output is None:
+                    out = hv_fig
+                else:
+                    out = resolve_formatter(output)(
+                        fmt=output,
+                        f=f,
+                        args=[],
+                        kwargs=kwargs,
+                        fig=rendered_fig(),
+                        backend=backend
+                    )
+
+                # Show the LISA figure toolbar
+                if ui:
+                    toolbar = self._make_fig_toolbar(hv_fig)
+                    # TODO: try to hook into holoviews or panel to make it
+                    # display the toolbar under the plot
+                    display(toolbar)
 
                 return out
-            return wrapper
-        return decorator
+        return wrapper
 
     @staticmethod
     def _get_rst_header(f):
@@ -611,28 +923,31 @@ class AnalysisHelpers(Loggable, abc.ABC):
         )
 
     @classmethod
-    def _get_rst_content(cls, f, args, kwargs, axis):
+    def _get_rst_content(cls, fmt, f, args, kwargs, fig, backend):
         kwargs = inspect.signature(f).bind_partial(*args, **kwargs)
         kwargs.apply_defaults()
         kwargs = kwargs.arguments
 
-        fmt = 'png'
-        b64_image = cls._get_base64_image(axis, fmt=fmt)
-
         hidden_params = {
             'self',
-            'axis',
-            'local_fig',
             'filepath',
-            'axis',
             'output',
             'img_format',
             'always_save',
-            'kwargs',
+
+            'backend',
+            '_compat_render',
+            'link_dataframes',
+            'cursor_delta',
+
+            'width',
+            'height',
             'colors',
             'linestyles',
             'markers',
+
             'rc_params',
+            'axis',
         }
         args_list = ', '.join(
             f'{k}={v}'
@@ -640,18 +955,60 @@ class AnalysisHelpers(Loggable, abc.ABC):
             if v is not None and k not in hidden_params
         )
 
-        return textwrap.dedent(f"""
-            .. figure:: data:image/{fmt};base64,{b64_image}
-                :alt: {f.__qualname__}
-                :align: center
-                :width: 100%
+        if backend == 'matplotlib':
+            axis = fig.axes
+            if len(axis) == 1:
+                axis = axis[0]
 
-                {args_list}
-        """)
+            fmt = 'png'
+            b64_image = cls._get_base64_image(axis, fmt=fmt)
+
+            return textwrap.dedent(f"""
+                .. figure:: data:image/{fmt};base64,{b64_image}
+                    :alt: {f.__qualname__}
+                    :align: center
+                    :width: 100%
+
+                    {args_list}
+            """)
+        elif backend == 'bokeh':
+            idt = ' ' * 4
+            indent = lambda x: idt + x.replace('\n', '\n' + idt)
+
+            title = args_list
+            # Use Sphinx classes to integrate with the theme
+            title = f'<p class="caption"><span class="caption-text">{title}</span>'
+
+            js = '\n'.join(bokeh.embed.components(fig))
+            # Fixes the exception when using bokeh.io.show() on the same plot.
+            # Suggested at:
+            # https://stackoverflow.com/questions/39735710/bokeh-models-must-be-owned-by-only-a-single-document
+            pn.io.model.remove_root(fig)
+
+            # For a standalone HTML snippet, we need the script tags to import
+            # the libraries, but duplicating it in the same page will lead to
+            # catastrophic load time, and memory exhaustion so we do it once
+            # per page using Sphinx's html_js_files conf to include them.
+            if fmt == 'sphinx-rst':
+                libs = ''
+            else:
+                libs = bokeh.resources.CDN.render()
+
+            content = f'<div class="figure align-center">{libs}\n{js}\n{title}</div>'
+            return f'.. raw:: html\n\n{indent(content)}'
+        else:
+            raise ValueError(f'unsupported backend {backend}')
 
     @classmethod
-    def _get_rst(cls, f, args, kwargs, axis):
-        return cls._get_rst_header(f) + '\n' + cls._get_rst_content(f, args, kwargs, axis)
+    def _get_rst(cls, fmt, f, args, kwargs, fig, backend):
+        return cls._get_rst_header(f) + '\n' + cls._get_rst_content(
+            fmt=fmt,
+            f=f,
+            args=args,
+            kwargs=kwargs,
+            fig=fig,
+            backend=backend
+        )
 
     @staticmethod
     def _docutils_render(writer, rst, doctitle_xform=False):
