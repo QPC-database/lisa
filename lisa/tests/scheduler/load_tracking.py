@@ -21,6 +21,7 @@ import itertools
 from statistics import mean
 
 import pandas as pd
+import holoviews as hv
 
 from lisa.tests.base import (
     TestMetric, Result, ResultBundle, AggregatedResultBundle, TestBundleBase,
@@ -36,6 +37,7 @@ from lisa.analysis.tasks import TasksAnalysis
 from lisa.analysis.rta import RTAEventsAnalysis
 from lisa.analysis.frequency import FrequencyAnalysis
 from lisa.pelt import PELT_SCALE, simulate_pelt, pelt_settling_time, kernel_util_mean
+from lisa.notebook import plot_signal
 
 UTIL_SCALE = PELT_SCALE
 
@@ -381,18 +383,26 @@ class InvarianceItem(LoadTrackingBase, ExekallTaggable):
         return df
 
     def _plot_pelt(self, task, signal_name, simulated, test_name):
-        trace = self.trace
+        ana = self.trace.ana(
+            backend='bokeh',
+            task=task,
+            tasks=[task],
+        )
 
-        axis = trace.analysis.load_tracking.plot_task_signals(task, signals=[signal_name])
-        simulated.plot(ax=axis, drawstyle='steps-post', label=f'simulated {signal_name}')
+        fig = (
+            ana.load_tracking.plot_task_signals(signals=[signal_name]) *
+            plot_signal(simulated, name=f'simulated {signal_name}') *
+            ana.tasks.plot_tasks_activation(
+                alpha=0.2,
+                overlay=True,
+                which_cpu=False,
+                # TODO: reeanble that when we get working twinx
+                # duration=True,
+            )
+        )
 
-        activation_axis = axis.twinx()
-        trace.analysis.tasks.plot_task_activation(task, alpha=0.2, axis=activation_axis, duration=True)
-
-        axis.legend()
-
-        path = ArtifactPath.join(self.res_dir, f'{test_name}_{signal_name}.png')
-        trace.analysis.load_tracking.save_plot(axis.get_figure(), filepath=path)
+        self._save_debug_plot(fig, name=f'{test_name}_{signal_name}')
+        return fig
 
     def _add_cpu_metric(self, res_bundle):
         freq_str = f'@{self.freq}' if self.freq is not None else ''
@@ -1040,17 +1050,18 @@ class CPUMigrationBase(LoadTrackingBase):
     @LoadTrackingAnalysis.plot_task_signals.used_events
     def _plot_util(self):
         trace = self.trace
-        analysis = trace.analysis.load_tracking
-        fig, axes = analysis.setup_plot(nrows=len(self.rtapp_tasks))
-        for task, axis in zip(self.rtapp_tasks, axes):
-            analysis.plot_task_signals(task, signals=['util'], axis=axis)
-            trace.analysis.rta.plot_phases(task, axis=axis, wlgen_profile=self.rtapp_profile)
+        ana = trace.ana(
+            backend='bokeh',
+        )
 
-            activation_axis = axis.twinx()
-            trace.analysis.tasks.plot_task_activation(task, duty_cycle=True, overlay=True, alpha=0.2, axis=activation_axis)
+        def plot_task(task):
+            _ana = ana(
+                task=task,
+                tasks=[task],
+            )
 
-            df_activations = trace.analysis.tasks.df_task_activation(task)
-            df_util = analysis.df_task_signal(task, 'util')
+            df_activations = _ana.tasks.df_task_activation()
+            df_util = _ana.load_tracking.df_task_signal(signal='util')
             def compute_means(row):
                 start = row.name
                 end = start + row['duration']
@@ -1065,20 +1076,37 @@ class CPUMigrationBase(LoadTrackingBase):
                 })
                 return series
 
-            df_means = trace.analysis.rta.df_phases(task).apply(compute_means, axis=1)
+            df_means = _ana.rta.df_phases().apply(compute_means, axis=1)
             df_means = series_refit_index(df_means, window=trace.window)
-            df_means['Phase duty cycle average'].plot(drawstyle='steps-post', ax=activation_axis)
-            df_means['Phase util tunnel average'].plot(drawstyle='steps-post', ax=axis)
-            activation_axis.legend()
-            axis.legend()
 
+            return hv.Layout(
+                [
+                    (
+                        _ana.load_tracking.plot_task_signals(signals=['util']) *
+                        plot_signal(df_means['Phase util tunnel average']) *
+                        _ana.rta.plot_phases(wlgen_profile=self.rtapp_profile) *
+                        _ana.tasks.plot_tasks_activation(
+                            overlay=True,
+                            # duty_cycle=True,
+                            alpha=0.2,
+                        )
+                    ),
+                    plot_signal(df_means['Phase duty cycle average'])
+                ]
+            ).cols(1)
 
-        filepath = ArtifactPath.join(self.res_dir, 'tasks_util.png')
-        analysis.save_plot(fig, filepath=filepath)
+        fig = hv.Layout(
+            list(map(plot_task, self.rtapp_tasks))
+        ).cols(1)
+        self._save_debug_plot(fig, name=f'tasks_util')
 
-        filepath = ArtifactPath.join(self.res_dir, 'cpus_util.png')
-        cpus = sorted(self.cpus)
-        analysis.plot_cpus_signals(cpus, signals=['util'], filepath=filepath)
+        ana.load_tracking.plot_cpus_signals(
+            sorted(self.cpus),
+            signals=['util'],
+            filepath=ArtifactPath.join(self.res_dir, 'cpus_util.html'),
+        )
+
+        return fig
 
     @get_trace_cpu_util.used_events
     @get_expected_cpu_util.used_events
