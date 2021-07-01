@@ -606,7 +606,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
                 {name}
                 {'=' * len(name)}
 
-                {get_short_doc(f)} {doc_link}
+                {get_short_doc(f, strip_rst=True)} {doc_link}
             """
         )
 
