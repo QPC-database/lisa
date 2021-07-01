@@ -295,7 +295,7 @@ def interact_tasks(trace, tasks=None, kind=None):
         # Allow selecting any rtapp task
         @interact_tasks(trace, kind='rtapp')
         def do_plot(task):
-            trace.analysis.load_tracking.plot_task_signals(task)
+            trace.ana.load_tracking.plot_task_signals(task)
     """
     if tasks is not None:
         tasks = [
@@ -307,7 +307,7 @@ def interact_tasks(trace, tasks=None, kind=None):
         if kind == 'all':
             tasks = trace.task_ids
         elif kind == 'rtapp':
-            tasks = trace.analysis.rta.rtapp_tasks
+            tasks = trace.ana.rta.rtapp_tasks
         else:
             raise ValueError(f'Unknown task kind: {kind}')
 

@@ -304,15 +304,15 @@ class InvarianceItem(LoadTrackingBase, ExekallTaggable):
         logger = self.get_logger()
         trace = self.trace
         task = trace.get_task_id(task)
-        cpus = trace.analysis.tasks.cpus_of_tasks([task])
+        cpus = trace.ana.tasks.cpus_of_tasks([task])
 
-        df_activation = trace.analysis.tasks.df_task_activation(
+        df_activation = trace.ana.tasks.df_task_activation(
             task,
             # Util only takes into account times where the task is actually
             # executing
             preempted_value=0,
         )
-        df = trace.analysis.load_tracking.df_task_signal(task, signal_name)
+        df = trace.ana.load_tracking.df_task_signal(task, signal_name)
         df = df.copy(deep=False)
 
         # Ignore the first activation, as its signals are incorrect
@@ -341,7 +341,7 @@ class InvarianceItem(LoadTrackingBase, ExekallTaggable):
             clock = None
 
         try:
-            capacity = trace.analysis.load_tracking.df_cpus_signal('capacity', cpus)
+            capacity = trace.ana.load_tracking.df_cpus_signal('capacity', cpus)
         except MissingTraceEventError:
             capacity = None
         else:
@@ -940,7 +940,7 @@ class CPUMigrationBase(LoadTrackingBase):
         cpu_freqs = self.plat_info['freqs']
 
         try:
-            freq_df = self.trace.analysis.frequency.df_cpus_frequency()
+            freq_df = self.trace.ana.frequency.df_cpus_frequency()
         except MissingTraceEventError:
             cpus_rel_freq = None
         else:
@@ -951,9 +951,9 @@ class CPUMigrationBase(LoadTrackingBase):
             }
 
         for task in self.rtapp_task_ids:
-            df = self.trace.analysis.tasks.df_task_activation(task)
+            df = self.trace.ana.tasks.df_task_activation(task)
 
-            for row in self.trace.analysis.rta.df_phases(task, wlgen_profile=self.rtapp_profile).itertuples():
+            for row in self.trace.ana.rta.df_phases(task, wlgen_profile=self.rtapp_profile).itertuples():
                 if not row.properties['meta']['from_test']:
                     continue
 
@@ -1021,13 +1021,13 @@ class CPUMigrationBase(LoadTrackingBase):
 
         :returns: A dict of the shape {cpu : {phase_id : trace_util}}
         """
-        df = self.trace.analysis.load_tracking.df_cpus_signal('util')
+        df = self.trace.ana.load_tracking.df_cpus_signal('util')
         tasks = self.rtapp_task_ids_map.keys()
         task = sorted(task for task in tasks if task.startswith('migr'))[0]
         task = self.rtapp_task_ids_map[task][0]
 
         cpu_util = {}
-        for row in self.trace.analysis.rta.df_phases(task, wlgen_profile=self.rtapp_profile).itertuples():
+        for row in self.trace.ana.rta.df_phases(task, wlgen_profile=self.rtapp_profile).itertuples():
             if not row.properties['meta']['from_test']:
                 continue
 
