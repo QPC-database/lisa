@@ -856,7 +856,6 @@ class AnalysisHelpers(Loggable, abc.ABC):
                             fig=rendered_fig(),
                             backend=backend
                         )
-                        # TODO: set page title when it's HTML, to avoid having a "<string>" placeholder
 
                         with open(filepath, 'wt', encoding='utf-8') as fd:
                             fd.write(content)
@@ -901,12 +900,17 @@ class AnalysisHelpers(Loggable, abc.ABC):
         return wrapper
 
     @staticmethod
-    def _get_rst_header(f):
+    def _get_title(f):
         name = f.__name__
         prefix = 'plot_'
         if name.startswith(prefix):
             name = name[len(prefix):]
         name = name.replace('_', ' ').capitalize()
+        return name
+
+    @classmethod
+    def _get_rst_header(cls, f):
+        name = cls._get_title(f)
 
         try:
             url = get_doc_url(f)
@@ -1011,7 +1015,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
         )
 
     @staticmethod
-    def _docutils_render(writer, rst, doctitle_xform=False):
+    def _docutils_render(writer, rst, title, doctitle_xform=True):
         overrides = {
             'input_encoding': 'utf-8',
             # enable/disable promotion of lone top-level section title
@@ -1027,6 +1031,7 @@ class AnalysisHelpers(Loggable, abc.ABC):
             # large base64-encoded image in it and docutils will otherwise just
             # replace the document body with an error
             'line_length_limit': len(rst) + 1,
+            'title': title,
         }
         parts = docutils.core.publish_parts(
             source=rst, source_path=None,
@@ -1038,9 +1043,13 @@ class AnalysisHelpers(Loggable, abc.ABC):
         return parts
 
     @classmethod
-    def _get_html(cls, *args, **kwargs):
-        rst = cls._get_rst(*args, **kwargs)
-        parts = cls._docutils_render(writer='html', rst=rst, doctitle_xform=True)
+    def _get_html(cls, *, f, **kwargs):
+        rst = cls._get_rst(f=f, **kwargs)
+        parts = cls._docutils_render(
+            writer='html',
+            rst=rst,
+            title=cls._get_title(f)
+        )
         return parts['whole']
 
 
